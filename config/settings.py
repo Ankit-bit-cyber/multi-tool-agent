@@ -1,55 +1,27 @@
-"""Pydantic settings and configuration loader."""
-
-from pydantic import BaseSettings
-from typing import Dict, Optional
-import os
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
-    """Application settings."""
-    
-    # LLM Configuration
-    llm_provider: str = "anthropic"  # "anthropic" or "openai"
-    llm_model: str = "claude-3-sonnet-20240229"
-    anthropic_api_key: Optional[str] = None
-    openai_api_key: Optional[str] = None
-    
-    # Agent Configuration
-    max_iterations: int = 10
-    temperature: float = 0.7
-    max_tokens: int = 1024
-    
-    # Tool Configuration
-    tools_enabled: Dict[str, bool] = {
-        "calculator": True,
-        "weather": True,
-        "search": True,
-    }
-    
-    # API Configuration
-    openweather_api_key: Optional[str] = None
-    serpapi_key: Optional[str] = None
-    
-    # Logging
-    verbose: bool = True
-    log_level: str = "INFO"
-    
-    class Config:
-        """Pydantic config."""
-        env_file = ".env"
-        case_sensitive = False
-    
-    @classmethod
-    def from_env(cls):
-        """Load settings from environment."""
-        return cls(
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            openweather_api_key=os.getenv("OPENWEATHER_API_KEY"),
-            serpapi_key=os.getenv("SERPAPI_KEY"),
-        )
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # LLM
+    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    llm_model: str = Field(default="claude-3-5-haiku-20241022", alias="LLM_MODEL")
+
+    # Tools
+    openweather_api_key: str = Field(default="", alias="OPENWEATHER_API_KEY")
+    serpapi_api_key: str = Field(default="", alias="SERPAPI_API_KEY")
+
+    # Agent behaviour
+    max_iterations: int = Field(default=10, alias="MAX_ITERATIONS")
+    verbose: bool = Field(default=False, alias="VERBOSE")
+    log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
 
-def load_settings() -> Settings:
-    """Load application settings."""
-    return Settings.from_env()
+settings = Settings()
