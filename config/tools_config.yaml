@@ -1,34 +1,16 @@
-# Tool Configuration
 tools:
   calculator:
     enabled: true
-    timeout: 5
-  
+    description: "Evaluates mathematical expressions safely"
+
   weather:
     enabled: true
-    timeout: 10
-    api: openweathermap
-  
+    description: "Fetches current weather for a given city"
+    base_url: "https://api.openweathermap.org/data/2.5/weather"
+    units: "metric"
+
   search:
     enabled: true
-    timeout: 10
-    api: serpapi
-    fallback: duckduckgo
-
-# Agent Configuration
-agent:
-  max_iterations: 10
-  temperature: 0.7
-  max_tokens: 1024
-  verbose: true
-
-# LLM Configuration
-llm:
-  provider: anthropic  # or openai
-  model: claude-3-sonnet-20240229
-  timeout: 30
-
-# Logging Configuration
-logging:
-  level: INFO
-  format: verbose
+    description: "Searches the web and returns top results"
+    max_results: 5
+    provider: "duckduckgo"   
