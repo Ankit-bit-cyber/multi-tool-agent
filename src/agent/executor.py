@@ -1,68 +1,47 @@
-"""Executor module — executes tool calls and handles errors."""
+"""
+executor.py — Executes tool calls and returns results as strings.
+"""
 
-from typing import Any, Dict, Optional
-from src.logging.logger import VerboseLogger
+from __future__ import annotations
+import traceback
+from typing import Any
+
+from src.tools.base import ToolRegistry
+from src.llm.client import ToolCall
 
 
-class Executor:
+class ToolExecutor:
     """
-    Executes tool calls with error handling.
-    
-    Responsibilities:
-    - Validate tool calls
-    - Execute with proper error handling
-    - Return structured results
+    Executes tool calls against a ToolRegistry.
+    All exceptions are caught and returned as error strings so the
+    agent loop is never interrupted by a failing tool.
     """
-    
-    def __init__(self, tools_registry: Dict[str, Any]):
-        """
-        Initialize Executor.
-        
-        Args:
-            tools_registry: Registry of available tools
-        """
-        self.tools_registry = tools_registry
-        self.logger = VerboseLogger()
-    
-    def execute(self, tool_name: str, **kwargs) -> Any:
-        """
-        Execute a tool call.
-        
-        Args:
-            tool_name: Name of the tool to execute
-            **kwargs: Arguments to pass to the tool
-            
-        Returns:
-            Tool execution result
-            
-        Raises:
-            ValueError: If tool not found
-            Exception: If tool execution fails
-        """
-        if tool_name not in self.tools_registry:
-            raise ValueError(f"Tool '{tool_name}' not found in registry")
-        
-        tool_callable = self.tools_registry[tool_name]
-        
+
+    def __init__(self, registry: ToolRegistry) -> None:
+        self.registry = registry
+
+    def run(self, tool_call: ToolCall) -> str:
+        """Execute a single tool call. Returns a string result (never raises)."""
+        tool_name = tool_call.name
+        args = tool_call.arguments
+
+        if tool_name not in self.registry.names():
+            return (
+                f"Error: tool '{tool_name}' is not registered. "
+                f"Available tools: {', '.join(self.registry.names())}"
+            )
+
         try:
-            self.logger.log(f"Executing tool: {tool_name} with args: {kwargs}")
-            result = tool_callable(**kwargs)
-            self.logger.log(f"Tool result: {result}")
-            return result
-        except Exception as e:
-            self.logger.log(f"Tool execution error: {str(e)}")
-            raise
-    
-    def get_tool_schemas(self) -> list:
-        """
-        Get tool schemas for LLM.
-        
-        Returns:
-            List of tool schemas
-        """
-        schemas = []
-        for tool_name, tool_callable in self.tools_registry.items():
-            schema = getattr(tool_callable, "schema", None)
-            if schema:
-                schemas.append(schema)
-        return schemas
+            result = self.registry.execute(tool_name, **args)
+            return str(result)
+        except TypeError as exc:
+            return f"Error: wrong arguments for '{tool_name}': {exc}"
+        except Exception:
+            return (
+                f"Error executing '{tool_name}':\n"
+                + traceback.format_exc(limit=3)
+            )
+
+    def run_all(self, tool_calls: list[ToolCall]) -> list[str]:
+        """Execute a list of tool calls and return results in order."""
+        return [self.run(tc) for tc in tool_calls]
