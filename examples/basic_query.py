@@ -1,34 +1,35 @@
-"""Simple one-shot agent example."""
+"""
+basic_query.py — Simplest possible agent usage example.
 
+Run:
+  python examples/basic_query.py
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.tools import build_registry
 from src.agent.agent import Agent
-from src.llm.client import AnthropicClient
-from src.tools.calculator import Calculator
-from src.tools.weather import WeatherTool
-from src.tools.search import SearchTool
 
 
-def main():
-    """Run a simple one-shot agent example."""
-    
-    # Initialize LLM client
-    llm_client = AnthropicClient()
-    
-    # Register tools
-    tools = {
-        "calculator": Calculator.evaluate,
-        "weather": WeatherTool.get_weather,
-        "search": SearchTool.search,
-    }
-    
-    # Create agent
-    agent = Agent(llm_client, tools, verbose=True)
-    
-    # Run query
-    query = "What is 25 * 4?"
-    print(f"\nUser: {query}\n")
-    
-    response = agent.run(query)
-    print(f"\nAgent: {response}\n")
+def main() -> None:
+    registry = build_registry()
+    agent = Agent(registry=registry, verbose=True)
+
+    queries = [
+        "What is 1234 * 5678?",
+        "What is the weather in Tokyo?",
+        "Who created the Python programming language?",
+    ]
+
+    for query in queries:
+        print("\n" + "=" * 60)
+        result = agent.run(query)
+        print(f"\nAnswer: {result.answer}")
+        print(f"Tools used: {result.tool_calls_made}")
+        print(f"Tokens: {result.total_tokens}")
 
 
 if __name__ == "__main__":
