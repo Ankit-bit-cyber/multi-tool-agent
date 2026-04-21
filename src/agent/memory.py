@@ -1,87 +1,62 @@
-"""Memory module — tracks conversation + tool result history."""
+"""
+memory.py — Tracks the full conversation history for a single agent run.
 
-from typing import Any, Dict, List, Optional
-from datetime import datetime
+The Anthropic API requires that assistant tool-use turns and their
+corresponding tool_result turns appear consecutively in the message list.
+This class handles that bookkeeping automatically.
+"""
+
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Any
+
+from src.llm.client import ToolCall, LLMClient
 
 
-class ConversationMemory:
-    """
-    Maintains conversation history and tool results.
-    
-    Tracks:
-    - User messages
-    - Assistant responses
-    - Tool calls and results
-    - Iteration history
-    """
-    
-    def __init__(self):
-        """Initialize conversation memory."""
-        self.messages: List[Dict[str, Any]] = []
-        self.tool_results: Dict[str, List[Any]] = {}
-        self.created_at = datetime.now()
-    
-    def add_user_message(self, content: str):
+@dataclass
+class Memory:
+    """Append-only message history for one agent session."""
+
+    messages: list[dict] = field(default_factory=list)
+
+    def add_user(self, text: str) -> None:
+        self.messages.append(LLMClient.user_message(text))
+
+    def add_assistant_text(self, text: str) -> None:
+        if text.strip():
+            self.messages.append(LLMClient.assistant_message(text))
+
+    def add_assistant_tool_calls(self, tool_calls: list[ToolCall], text: str = "") -> None:
         """
-        Add user message to history.
-        
-        Args:
-            content: User's message text
+        Add the assistant turn that contains tool_use blocks.
+        Must be followed by add_tool_results() before the next LLM call.
         """
-        self.messages.append({
-            "role": "user",
-            "content": content,
-            "timestamp": datetime.now().isoformat(),
-        })
-    
-    def add_assistant_message(self, content: Dict[str, Any]):
+        self.messages.append(
+            LLMClient.assistant_tool_call_message(tool_calls, text)
+        )
+
+    def add_tool_results(self, tool_calls: list[ToolCall], results: list[str]) -> None:
         """
-        Add assistant response to history.
-        
-        Args:
-            content: Assistant's response
+        Add all tool results for a batch of tool calls.
+        Anthropic requires a single user message containing ALL tool_result
+        blocks from the preceding assistant tool_use turn.
         """
-        self.messages.append({
-            "role": "assistant",
-            "content": content,
-            "timestamp": datetime.now().isoformat(),
-        })
-    
-    def add_tool_result(self, tool_name: str, result: Any):
-        """
-        Add tool execution result to history.
-        
-        Args:
-            tool_name: Name of the tool executed
-            result: Result from tool execution
-        """
-        if tool_name not in self.tool_results:
-            self.tool_results[tool_name] = []
-        
-        self.tool_results[tool_name].append({
-            "result": result,
-            "timestamp": datetime.now().isoformat(),
-        })
-        
-        # Also add to messages for context
-        self.messages.append({
-            "role": "tool",
-            "tool_name": tool_name,
-            "content": str(result),
-            "timestamp": datetime.now().isoformat(),
-        })
-    
-    def get_messages(self) -> List[Dict[str, Any]]:
-        """
-        Get conversation history.
-        
-        Returns:
-            List of messages
-        """
-        return self.messages.copy()
-    
-    def reset(self):
-        """Clear conversation history."""
-        self.messages = []
-        self.tool_results = {}
-        self.created_at = datetime.now()
+        content_blocks = [
+            {
+                "type": "tool_result",
+                "tool_use_id": tc.id,
+                "content": result,
+            }
+            for tc, result in zip(tool_calls, results)
+        ]
+        self.messages.append({"role": "user", "content": content_blocks})
+
+    def snapshot(self) -> list[dict]:
+        """Return a copy of the current message list."""
+        return list(self.messages)
+
+    def clear(self) -> None:
+        self.messages.clear()
+
+    def __len__(self) -> int:
+        return len(self.messages)
