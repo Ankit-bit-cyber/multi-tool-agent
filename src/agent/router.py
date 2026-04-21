@@ -1,54 +1,26 @@
-"""Router module — decides which tool the LLM should call."""
+"""
+router.py — Decides whether the LLM response requires a tool call
+or is a final answer. Pure logic, no API calls.
+"""
 
-from typing import Dict, Any, Optional
-from src.llm.client import LLMClient
+from __future__ import annotations
+from src.llm.client import LLMResponse
 
 
-class Router:
+class ToolRouter:
     """
-    Routes LLM outputs to appropriate tools.
-    
-    Responsibilities:
-    - Parse LLM responses for tool calls
-    - Validate tool existence
-    - Prioritize tools based on context
+    Inspects an LLMResponse and classifies it as:
+      - tool_call   → LLM wants to invoke one or more tools
+      - final_answer → LLM produced a plain text answer
     """
-    
-    def __init__(self, llm_client: LLMClient):
-        """
-        Initialize Router.
-        
-        Args:
-            llm_client: LLM client for tool selection logic
-        """
-        self.llm_client = llm_client
-    
-    def route(self, llm_response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Route LLM response to a tool.
-        
-        Args:
-            llm_response: Response from LLM
-            
-        Returns:
-            Tool call specification or None if no tool needed
-        """
-        if llm_response.get("type") != "tool_use":
-            return None
-        
-        return {
-            "tool_name": llm_response.get("tool_name"),
-            "tool_input": llm_response.get("tool_input", {}),
-        }
-    
-    def get_available_tools(self, tools_registry: Dict[str, Any]) -> list:
-        """
-        Get list of available tools for routing context.
-        
-        Args:
-            tools_registry: Registry of available tools
-            
-        Returns:
-            List of tool names
-        """
-        return list(tools_registry.keys())
+
+    def route(self, response: LLMResponse) -> str:
+        if response.has_tool_calls:
+            return "tool_call"
+        return "final_answer"
+
+    def is_tool_call(self, response: LLMResponse) -> bool:
+        return self.route(response) == "tool_call"
+
+    def is_final_answer(self, response: LLMResponse) -> bool:
+        return self.route(response) == "final_answer"
