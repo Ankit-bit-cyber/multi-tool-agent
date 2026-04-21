@@ -1,124 +1,215 @@
-"""CLI entry point for the multi-tool agent."""
+"""
+main.py — CLI entry point for the multi-tool agent.
 
-import argparse
+Usage examples:
+  python main.py ask "What is 15% of 847?"
+  python main.py ask "What's the weather in Mumbai?" --verbose
+  python main.py ask "Who invented Python?" --compare
+  python main.py ask "sqrt(144) and weather in Delhi" --verbose --compare
+  python main.py tools
+  python main.py chat
+"""
+
 import sys
-from typing import Dict, Any
+import time
+from pathlib import Path
 
+import typer
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich.columns import Columns
+from rich import box
+
+# ── ensure project root is on sys.path ───────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent))
+
+from src.tools import build_registry
 from src.agent.agent import Agent
-from src.llm.client import AnthropicClient, OpenAIClient, LLMClient
-from src.tools.calculator import Calculator
-from src.tools.weather import WeatherTool
-from src.tools.search import SearchTool
-from config.settings import load_settings
+
+app = typer.Typer(
+    name="agent",
+    help="Multi-tool AI agent powered by Claude.",
+    add_completion=False,
+)
+console = Console()
 
 
-def create_llm_client(settings) -> LLMClient:
-    """Create LLM client based on settings."""
-    if settings.llm_provider == "openai":
-        return OpenAIClient(model=settings.llm_model)
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _make_agent(verbose: bool, model: str | None = None) -> Agent:
+    registry = build_registry()
+    return Agent(registry=registry, verbose=verbose, model=model)
+
+
+def _print_comparison(query: str, agent_answer: str, direct_answer: str,
+                       agent_tokens: int, direct_tokens: int,
+                       agent_tools: list[str], agent_ms: float, direct_ms: float) -> None:
+    console.print()
+    console.print(
+        Panel(
+            Text(query, style="bold white"),
+            title="[bold cyan]Query[/bold cyan]",
+            border_style="cyan",
+            padding=(0, 2),
+        )
+    )
+
+    # Side-by-side panels
+    agent_panel = Panel(
+        Text(agent_answer.strip(), style="white"),
+        title="[bold green]🤖 Agent (with tools)[/bold green]",
+        subtitle=f"[dim]tools: {', '.join(agent_tools) or 'none'} | {agent_tokens} tokens | {agent_ms:.0f} ms[/dim]",
+        border_style="green",
+        padding=(0, 2),
+        width=80,
+    )
+    direct_panel = Panel(
+        Text(direct_answer.strip(), style="white"),
+        title="[bold yellow]💬 Direct LLM (no tools)[/bold yellow]",
+        subtitle=f"[dim]{direct_tokens} tokens | {direct_ms:.0f} ms[/dim]",
+        border_style="yellow",
+        padding=(0, 2),
+        width=80,
+    )
+
+    console.print(agent_panel)
+    console.print(direct_panel)
+
+    # Diff table
+    table = Table(box=box.SIMPLE_HEAD, show_header=True, header_style="bold dim")
+    table.add_column("Metric", style="dim", width=22)
+    table.add_column("Agent", justify="right", width=18)
+    table.add_column("Direct LLM", justify="right", width=18)
+    table.add_row("Tools used", ", ".join(agent_tools) or "none", "—")
+    table.add_row("Tokens", str(agent_tokens), str(direct_tokens))
+    table.add_row("Latency (ms)", f"{agent_ms:.0f}", f"{direct_ms:.0f}")
+    console.print(table)
+    console.print()
+
+
+# ── commands ──────────────────────────────────────────────────────────────────
+
+@app.command()
+def ask(
+    query: str = typer.Argument(..., help="The question or task for the agent"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show reasoning steps"),
+    compare: bool = typer.Option(False, "--compare", "-c", help="Compare agent vs. direct LLM"),
+    model: str = typer.Option(None, "--model", "-m", help="Override the LLM model"),
+) -> None:
+    """Send a single query to the agent and print the answer."""
+    agent = _make_agent(verbose=verbose and not compare, model=model)
+
+    if compare:
+        # ── agent run ──────────────────────────────────────────────────────
+        console.print("\n[dim]Running agent...[/dim]")
+        t0 = time.perf_counter()
+        agent_result = agent.run(query)
+        agent_ms = (time.perf_counter() - t0) * 1000
+
+        # ── direct run ─────────────────────────────────────────────────────
+        console.print("[dim]Running direct LLM...[/dim]")
+        t1 = time.perf_counter()
+        direct_result = agent.run_direct(query)
+        direct_ms = (time.perf_counter() - t1) * 1000
+
+        _print_comparison(
+            query,
+            agent_result.answer,
+            direct_result.answer,
+            agent_result.total_tokens,
+            direct_result.total_tokens,
+            agent_result.tool_calls_made,
+            agent_ms,
+            direct_ms,
+        )
     else:
-        return AnthropicClient(model=settings.llm_model)
+        result = agent.run(query)
+        if not verbose:
+            console.print()
+            console.print(
+                Panel(
+                    Text(result.answer.strip(), style="white"),
+                    title="[bold green]Answer[/bold green]",
+                    border_style="green",
+                    padding=(0, 2),
+                )
+            )
+            if result.tool_calls_made:
+                console.print(
+                    f"[dim]  Tools used: {', '.join(result.tool_calls_made)} "
+                    f"| {result.total_tokens} tokens[/dim]\n"
+                )
 
 
-def get_enabled_tools(settings) -> Dict[str, Any]:
-    """Get enabled tools based on settings."""
-    tools = {}
-    
-    if settings.tools_enabled.get("calculator", True):
-        tools["calculator"] = Calculator.evaluate
-    
-    if settings.tools_enabled.get("weather", True):
-        tools["weather"] = WeatherTool.get_weather
-    
-    if settings.tools_enabled.get("search", True):
-        tools["search"] = SearchTool.search
-    
-    return tools
+@app.command()
+def tools() -> None:
+    """List all registered tools and their descriptions."""
+    registry = build_registry()
+    table = Table(
+        title="Registered tools",
+        box=box.SIMPLE_HEAD,
+        show_header=True,
+        header_style="bold dim",
+    )
+    table.add_column("Name", style="bold cyan", width=16)
+    table.add_column("Parameters", width=28)
+    table.add_column("Description", width=52)
+
+    for schema in registry.anthropic_schemas():
+        params = ", ".join(schema["input_schema"]["properties"].keys())
+        table.add_row(schema["name"], params, schema["description"][:100])
+
+    console.print()
+    console.print(table)
+    console.print()
 
 
-def main():
-    """Main CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="Multi-tool AI Agent"
+@app.command()
+def chat(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show reasoning steps"),
+    model: str = typer.Option(None, "--model", "-m", help="Override the LLM model"),
+) -> None:
+    """Start an interactive chat session with the agent."""
+    agent = _make_agent(verbose=verbose, model=model)
+    console.print()
+    console.print(
+        Panel(
+            "[bold white]Multi-tool Agent — Interactive Mode[/bold white]\n"
+            "[dim]Type your question and press Enter. Type 'exit' or Ctrl-C to quit.[/dim]",
+            border_style="cyan",
+            padding=(0, 2),
+        )
     )
-    parser.add_argument(
-        "query",
-        nargs="?",
-        help="Query to process"
-    )
-    parser.add_argument(
-        "--provider",
-        choices=["anthropic", "openai"],
-        help="LLM provider"
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="Run in interactive mode"
-    )
-    
-    args = parser.parse_args()
-    
-    # Load settings
-    settings = load_settings()
-    
-    if args.provider:
-        settings.llm_provider = args.provider
-    
-    if args.verbose:
-        settings.verbose = True
-    
-    # Create LLM client
-    llm_client = create_llm_client(settings)
-    
-    # Get enabled tools
-    tools = get_enabled_tools(settings)
-    
-    # Create agent
-    agent = Agent(
-        llm_client,
-        tools,
-        max_iterations=settings.max_iterations,
-        verbose=settings.verbose,
-    )
-    
-    if args.interactive:
-        # Interactive mode
-        print("\n🤖 Multi-tool Agent Interactive Mode")
-        print("Type 'exit' or 'quit' to exit\n")
-        
-        while True:
-            try:
-                query = input("You: ").strip()
-                
-                if query.lower() in ["exit", "quit"]:
-                    print("Goodbye!")
-                    break
-                
-                if not query:
-                    continue
-                
-                response = agent.run(query)
-                print(f"\nAgent: {response}\n")
-                
-            except KeyboardInterrupt:
-                print("\nExiting...")
-                sys.exit(0)
-    
-    elif args.query:
-        # Single query mode
-        print(f"\nUser: {args.query}\n")
-        response = agent.run(args.query)
-        print(f"\nAgent: {response}\n")
-    
-    else:
-        parser.print_help()
 
+    while True:
+        try:
+            query = typer.prompt("\n[You]", prompt_suffix=" > ")
+        except (typer.Abort, KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Goodbye.[/dim]")
+            break
+
+        if query.strip().lower() in {"exit", "quit", "bye", "q"}:
+            console.print("[dim]Goodbye.[/dim]")
+            break
+
+        if not query.strip():
+            continue
+
+        result = agent.run(query)
+        if not verbose:
+            console.print(
+                Panel(
+                    Text(result.answer.strip(), style="white"),
+                    title="[bold green]Agent[/bold green]",
+                    border_style="green",
+                    padding=(0, 2),
+                )
+            )
+
+
+# ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    main()
+    app()
